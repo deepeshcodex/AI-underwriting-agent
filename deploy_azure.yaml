@@ -1,0 +1,87 @@
+# Azure Container Apps deployment — adjust subscription/resourceGroup/env names.
+# Trigger: push to main branch.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  REGISTRY: saunderwriting.azurecr.io
+  IMAGE_UI:  sa-underwriting-ui
+  IMAGE_API: sa-underwriting-api
+  RESOURCE_GROUP: sa-underwriting-rg
+  ENVIRONMENT: sa-underwriting-env
+
+stages:
+
+  # ── Build & push images ────────────────────────────────────────────────────
+  - stage: Build
+    displayName: Build & push Docker images
+    jobs:
+      - job: BuildImages
+        steps:
+          - task: Docker@2
+            displayName: Build UI image
+            inputs:
+              command: buildAndPush
+              containerRegistry: saACRConnection
+              repository: $(IMAGE_UI)
+              dockerfile: Dockerfile
+              buildContext: .
+              tags: |
+                $(Build.BuildId)
+                latest
+
+  # ── Deploy to Azure Container Apps ────────────────────────────────────────
+  - stage: Deploy
+    displayName: Deploy to Azure Container Apps
+    dependsOn: Build
+    jobs:
+      - deployment: DeployUI
+        displayName: Deploy Streamlit UI
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Deploy sa-ui container app
+                  inputs:
+                    azureSubscription: saAzureConnection
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp update \
+                        --name sa-ui \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --image $(REGISTRY)/$(IMAGE_UI):$(Build.BuildId) \
+                        --set-env-vars \
+                          OPENAI_API_KEY=secretref:openai-api-key \
+                          CREDIT_USE_MOCK=true \
+                          LANGCHAIN_TRACING_V2=false
+
+      - deployment: DeployAPI
+        displayName: Deploy FastAPI service
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Deploy sa-api container app
+                  inputs:
+                    azureSubscription: saAzureConnection
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp update \
+                        --name sa-api \
+                        --resource-group $(RESOURCE_GROUP) \
+                        --image $(REGISTRY)/$(IMAGE_API):$(Build.BuildId) \
+                        --set-env-vars \
+                          OPENAI_API_KEY=secretref:openai-api-key \
+                          CREDIT_USE_MOCK=true

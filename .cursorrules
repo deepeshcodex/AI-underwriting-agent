@@ -1,0 +1,9 @@
+# SA Bank Underwriting Agent — Cursor rules
+
+For implementation, architecture, and config-driven behavior, follow the repository root file **END-TO-END.md** (primary spec).
+
+Constraints:
+- No hardcoded thresholds, prompts, or API endpoints; use YAML under `config/` and environment variables per `.env.example`.
+- Prefer LangGraph nodes, Pydantic validation, and Streamlit for the underwriter pane unless END-TO-END.md specifies otherwise.
+
+When asked to extend or refactor the underwriting agent, read END-TO-END.md first, then align code with existing modules in this repo.

@@ -1,0 +1,305 @@
+# LLM prompts — edit YAML to change behaviour without redeploying.
+
+version: "1.1"
+
+model:
+  default_model: "gpt-4o-mini"   # override via env: EXTRACTION_MODEL
+  temperature: 0
+
+# ── System persona ────────────────────────────────────────────────────────────
+system: |
+  You are an accredited Structured Annuity underwriting assistant for SA Bank.
+  Extract only factual information visible in the document text. Output strict JSON
+  matching the requested schema. Use null for unknown values. Currency is ZAR unless
+  stated otherwise. Dates: ISO 8601 (YYYY-MM-DD).
+
+# ── Standard field extraction (per document) ─────────────────────────────────
+user_template: |
+  Document bundle id: {bundle_id}
+  Document category hint: {category_hint}
+
+  Raw OCR text:
+  ---
+  {ocr_text}
+  ---
+
+  Extract the following fields as JSON keys (use null if absent):
+  {field_spec}
+
+json_field_spec_extraction: |
+  applicant_full_name (string),
+  date_of_birth (string ISO date),
+  gross_monthly_income (number, ZAR — use salary/wage credits if visible),
+  monthly_debt_payments (number, ZAR — sum of loan/bond/HP debits),
+  noi (annual net operating income if stated, number ZAR — null if not explicitly stated),
+  debt_service (annual debt service if stated, number ZAR — null if not explicitly stated),
+  proposed_annuity_premium_zar (number),
+  life_expectancy_years (number — null if not stated),
+  spouse_benefit_percent (number 0-100 — null if not stated),
+  employer_name (string),
+  account_last4 (string if visible)
+
+# ── Deep bank-statement analysis (second LLM pass) ───────────────────────────
+bank_statement_system: |
+  You are a senior SA Bank credit analyst. Analyse the raw bank statement text and
+  extract a COMPLETE customer financial profile. Be thorough — extract every piece
+  of information useful for an underwriter deciding whether to issue a Structured
+  Annuity policy. Output strict JSON only.
+
+bank_statement_user: |
+  Bank statement OCR text (may contain multiple months):
+  ---
+  {ocr_text}
+  ---
+
+  Return a single JSON object with ALL of the following keys (null if genuinely absent):
+
+  account_holder_name        (string)
+  bank_name                  (string)
+  account_number_masked      (string, last 4 digits only)
+  account_type               (string: e.g. "Current", "Cheque", "Savings")
+  statement_period_start     (ISO date)
+  statement_period_end       (ISO date)
+  months_covered             (integer)
+  opening_balance_zar        (number)
+  closing_balance_zar        (number)
+
+  salary_income_monthly_avg  (number, ZAR — average monthly salary/wage credits)
+  other_income_monthly_avg   (number, ZAR — rental, dividends, transfers in)
+  total_income_monthly_avg   (number, ZAR — all credits averaged over months)
+  total_expenses_monthly_avg (number, ZAR — all debits averaged)
+  net_cashflow_monthly_avg   (number, ZAR — income minus expenses)
+
+  recurring_debits           (list of objects: {description, amount_zar, frequency} — loans, rent, subscriptions)
+  debt_obligations_total_monthly (number, ZAR — sum of identifiable loan/bond/HP repayments per month)
+
+  largest_single_credit_zar  (number)
+  largest_single_debit_zar   (number)
+  num_transactions           (integer)
+  num_debit_transactions     (integer)
+  num_credit_transactions    (integer)
+
+  delinquency_events         (list of strings — any "failed","dishonoured","NSF","overdue" entries with date and amount)
+  negative_balance_count     (integer)
+  balance_trend              (string: "improving" | "stable" | "declining" | "volatile" | null)
+  income_stability           (string: "stable" | "irregular" | "declining" | null)
+  savings_behaviour          (string: "regular_saver" | "no_savings" | "draws_down" | null)
+
+  employer_name              (string — from salary deposit description if visible)
+  salary_payment_day         (integer 1-31, day of month salary typically arrives)
+
+# ── OpenAI credit scoring ─────────────────────────────────────────────────────
+credit_scoring_system: |
+  You are a credit risk officer at SA Bank. Based on the bank statement analysis
+  provided, produce a structured credit assessment for a Structured Annuity application.
+  Output strict JSON only. Be objective and evidence-based.
+
+credit_scoring_user: |
+  Customer financial profile (derived from bank statement analysis):
+  {profile_json}
+
+  Underwriting context:
+  - Product: Structured Annuity (SA)
+  - Age at application: {age_years}
+  - Proposed annual premium (ZAR): {premium_zar}
+  - Minimum credit score required: {score_min}
+
+  Return a JSON object with:
+    credit_score          (integer 300-850 — your risk-adjusted estimate)
+    credit_grade          (string: "A"=750+, "B"=700-749, "C"=650-699, "D"=600-649, "E"=550-599, "F"=<550)
+    recommendation        (string: "APPROVE" | "REVIEW" | "DECLINE")
+    confidence            (string: "high" | "medium" | "low")
+    positive_factors      (list of strings — up to 5 evidence-based reasons)
+    risk_factors          (list of strings — up to 5 evidence-based concerns)
+    affordability_comment (string — 1-2 sentences on whether premium is affordable)
+    data_quality          (string: "good" | "partial" | "poor" — quality of bank statement data)
+    notes                 (string — any other observations for the underwriter)
+
+# ── Generic financial document parser (any doc type) ─────────────────────────
+document_parser_system: |
+  You are a senior financial analyst at SA Bank. You can analyze ANY financial document:
+  bank statements, income statements, balance sheets, management accounts, payslips,
+  or any combination. Extract ALL available data and compute underwriting metrics.
+  Output ONLY valid JSON — no markdown, no explanation.
+
+document_parser_user: |
+  Document type hint: {category_hint}
+
+  Raw document text:
+  ---
+  {ocr_text}
+  ---
+
+  Underwriting thresholds for context:
+    DSCR minimum   : {dscr_min}
+    DTI maximum    : {dti_max} (as fraction, e.g. 0.4 = 40%)
+    Credit score min: {score_min}
+    Proposed premium: ZAR {premium_zar}
+
+  STEP 1 — Detect document_type: one of "bank_statement", "income_statement",
+  "balance_sheet", "management_accounts", "payslip", "multi_period_accounts", or "other".
+
+  STEP 2 — Extract entity/customer information (apply to ALL document types):
+    entity_name           (string — company or individual name;
+                           if not found, use the document title e.g. "ABC Financial Statement")
+    account_holder_name   (string — if individual)
+    account_number_masked (string — last 4 digits only)
+    bank_name             (string)
+    account_type          (string)
+    branch_code           (string)
+    currency              (string, default "ZAR")
+    statement_period_start (ISO date — infer from any date clue in the document;
+                            if annual/AFS with no dates, use null)
+    statement_period_end   (ISO date — same rule)
+    months_covered         (integer — INFERENCE RULES:
+                            • Bank statement: count months in transactions
+                            • Income/financial statement with "Annual" or "Annualised": 12
+                            • Income statement with "6 months" / "Half year": 6
+                            • Income statement with "Quarter": 3
+                            • Multi-period accounts: count reporting periods × 12
+                            • Single P&L with no period label: default 12
+                            • Payslip: 1
+                            NEVER return null for months_covered — always infer a value)
+
+  STEP 3 — FOR BANK STATEMENTS:
+  Extract transactions array — every row you can see:
+    transactions: [
+      { date, description, debit_zar, credit_zar, balance_zar }
+    ]
+  Extract monthly_summaries array — one entry per month:
+    monthly_summaries: [
+      { month (YYYY-MM), total_credits, total_debits, net_cashflow,
+        loan_repayments, salary_payments, opening_balance, closing_balance,
+        delinquency_events (list of strings) }
+    ]
+
+  STEP 3 — FOR INCOME/FINANCIAL STATEMENTS:
+  ⚠️  EBITDA WARNING: documents may contain malformed numbers like "58,56,000"
+      (Indian/formatting artifacts). ALWAYS compute EBITDA from components:
+        EBITDA = Revenue − Cost_of_Sales − Salaries − Rent_and_Utilities − Other_OPEX
+      Do NOT use the stated EBITDA figure if it exceeds Revenue (that is impossible).
+      Cross-check: EBITDA_computed should equal Revenue × EBITDA_Margin_percent/100.
+
+    revenue_zar               (number — annual)
+    cost_of_goods_sold_zar    (number — annual)
+    gross_profit_zar          (number — revenue minus COGS)
+    salaries_annual_zar       (number — from P&L)
+    rent_utilities_annual_zar (number — from P&L)
+    operating_expenses_zar    (number — total OPEX excl. finance costs / debt service)
+    ebitda_computed_zar       (ALWAYS compute: gross_profit_zar - operating_expenses_zar)
+    ebitda_stated_zar         (raw stated EBITDA from document — may be malformed, use only if sane)
+    ebitda_zar                (= ebitda_computed_zar; NEVER use stated if > revenue_zar)
+    finance_costs_zar         (interest / finance charges — annual)
+    net_income_zar            (number — after tax)
+    total_assets_zar          (number — from balance sheet)
+    total_liabilities_zar     (number — from balance sheet)
+    current_assets_zar        (number — "Total Current Assets" line)
+    current_liabilities_zar   (number — "Total Current Liabilities" line)
+    total_equity_zar          (number — "Total Equity" or "Shareholders Equity" line)
+    retained_earnings_zar     (number — from equity section)
+    total_debt_zar            (number — short-term debt EMIs + any long-term debt)
+    annual_debt_service_zar   (from Cash Flow Statement: "Debt Servicing (EMIs)" line)
+
+    -- If the document has a "Key Financial Ratios" or similar section, extract directly: --
+    stated_ratios: {
+      dscr              (stated DSCR number — trust this if present)
+      ebitda_margin_pct (stated EBITDA margin as percent, e.g. 31.5)
+      net_profit_margin_pct
+      dti_pct           (stated Debt-to-Income as percent)
+      current_ratio     (stated current ratio)
+    }
+
+  STEP 4 — COMPUTE DERIVED METRICS (for all document types):
+  CRITICAL DEFINITIONS — follow exactly:
+    REVENUE        = total monthly inflows/credits (sales, customer payments, transfers in)
+    OPEX           = operating costs ONLY: suppliers/COGS + salaries/wages + rent/rates/utilities
+                     + insurance + admin/marketing.  DO NOT include loan repayments here.
+    EBITDA         = REVENUE − OPEX   (earnings BEFORE interest, tax, depreciation, amortisation)
+    DEBT SERVICE   = all loan/bond/HP/finance-lease repayments (monthly)
+    DSCR           = EBITDA_monthly / DEBT_SERVICE_monthly
+    DTI            = DEBT_SERVICE_monthly / REVENUE_monthly   (use REVENUE, NOT net income)
+
+  Using the extracted data, compute and include a "derived" object:
+    avg_monthly_income_zar      (= REVENUE: avg of monthly total credits/revenue)
+    avg_monthly_expenses_zar    (avg of ALL monthly debits including debt service)
+    avg_monthly_net_zar         (avg_monthly_income_zar - avg_monthly_expenses_zar)
+    avg_monthly_balance_zar     (bank stmt: average closing balance across months)
+
+    opex_monthly_zar            (OPEX only: suppliers+salaries+rent+utilities+admin;
+                                 EXCLUDE loan/bond/hire-purchase repayments)
+    debt_service_monthly_zar    (sum of all monthly loan/bond/finance repayments;
+                                 alias: loan_repayment_monthly_zar)
+    total_monthly_debt_zar      (= debt_service_monthly_zar — all recurring debt obligations)
+    annual_debt_service_zar     (debt_service_monthly_zar * 12)
+
+    ebitda_monthly_zar          (for bank stmt: avg_monthly_income_zar - opex_monthly_zar;
+                                 for financial stmt: ebitda_computed_zar / 12
+                                 NEVER use stated EBITDA if it is > revenue_zar)
+    ebitda_annual_zar           (ebitda_monthly_zar * 12)
+    ebitda_margin               (ebitda_monthly_zar / avg_monthly_income_zar — fraction;
+                                 cross-check: if stated_ratios.ebitda_margin_pct exists,
+                                 use stated_ratios.ebitda_margin_pct / 100)
+    dscr                        (PRIORITY ORDER:
+                                 1. stated_ratios.dscr if present and 0.1 < value < 10
+                                 2. ebitda_monthly_zar / debt_service_monthly_zar
+                                 e.g. 122000/102939 = 1.18 — null only if both missing)
+    dti_ratio                   (debt_service_monthly_zar / avg_monthly_income_zar;
+                                 use REVENUE as denominator — null if data missing)
+    dti_percent                 (dti_ratio * 100)
+
+    net_profit_monthly_zar      (avg_monthly_income_zar - avg_monthly_expenses_zar)
+    net_profit_margin           (net_profit_monthly_zar / avg_monthly_income_zar — fraction)
+    gross_monthly_income_zar    (= avg_monthly_income_zar for businesses)
+    cashflow_ratio              (total credits / total debits)
+    income_stability            ("stable"|"improving"|"declining"|"volatile"|"unknown")
+    balance_trend               ("improving"|"stable"|"declining"|"volatile"|"unknown")
+    savings_behaviour           ("regular_saver"|"no_savings"|"draws_down"|"unknown")
+    salary_payment_day          (integer — day salary arrives, null if not payslip)
+    employer_name               (string — from salary credits if visible)
+
+    -- BALANCE SHEET RATIOS (null for bank statements, populate from financial statements) --
+    ebitda_zar                  (= ebitda_annual_zar)
+    gross_profit_margin         (gross_profit / revenue if stated, else null)
+    current_ratio               (current_assets / current_liabilities — null if not in doc)
+    debt_to_equity              (total_debt / equity — null if not in doc)
+    return_on_assets            (net_income / total_assets — null if not in doc)
+    years_in_business           (integer — if determinable from statement dates or header)
+
+  STEP 5 — DELINQUENCY EVENTS:
+  List ALL events of: FAILED payments, dishonoured debits, NSF, overdue, returned items,
+  negative balances, missed payments. For each include: date, description, amount.
+    delinquency_events: [ {date, description, amount_zar} ]
+
+  STEP 6 — LOAN ELIGIBILITY (compute for underwriter):
+  Based on the extracted/derived data and the thresholds provided:
+    loan_eligibility: {
+      dscr_pass      (bool or null — true if dscr >= {dscr_min})
+      dti_pass       (bool or null — true if dti <= {dti_max})
+      delinquency_free (bool — true if delinquency_events is empty)
+      premium_affordable (bool — true if monthly loan repayment would fit cashflow)
+      eligibility_summary (string — 1-2 sentence plain English summary)
+      flags (list of strings — any concerns for underwriter)
+    }
+
+  Return ONE JSON object with ALL of the above keys.
+  Use null for any field not determinable from the document.
+
+# ── Aggregation (multi-document merge) ───────────────────────────────────────
+aggregation_system: |
+  You merge multiple extraction JSON objects from the same applicant into one
+  consistent record. Prefer non-null values; resolve conflicts by choosing the
+  value from the most recent bank or income document when dates are present.
+
+aggregation_user_template: |
+  Partial JSON records:
+  {records_json}
+
+  Return a single merged JSON with the same keys. ZAR numbers only.
+
+# ── Simple income extraction (used standalone) ───────────────────────────────
+extract_income: |
+  From the bank statement text, extract:
+  1. Monthly average income (total credits / number of months)
+  2. Monthly average expenses (total debits / number of months)
+  3. Identifiable debt obligations (recurring debits labelled as loan, bond, hire purchase, etc.)
+  Output JSON only with keys: avg_monthly_income, avg_monthly_expenses, debt_obligations (list), months_covered (int).

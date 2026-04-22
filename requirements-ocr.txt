@@ -1,0 +1,2 @@
+# Optional: heavier OCR stack (install when needed)
+unstructured[pdf]>=0.16.0

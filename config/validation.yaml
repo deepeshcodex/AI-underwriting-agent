@@ -1,0 +1,44 @@
+# PDF bank-statement validation — delinquency detection + ML feature spec.
+
+version: "1.0"
+
+delinq_keywords:
+  - "failed"
+  - "dishonored"
+  - "overdue"
+  - "late fee"
+  - "nsf"
+  - "unpaid"
+  - "returned debit"
+  - "payment failed"
+
+# Column name aliases for parsed bank-statement DataFrames.
+# Mapping: canonical_name → list of possible header variations (case-insensitive).
+df_column_aliases:
+  date:    ["date", "txn date", "transaction date", "value date"]
+  description: ["description", "desc", "details", "narration", "transaction"]
+  debit:   ["debit", "debits", "withdrawal", "withdrawals", "amount debit"]
+  credit:  ["credit", "credits", "deposit", "deposits", "amount credit"]
+  balance: ["balance", "closing balance", "running balance", "avail balance"]
+
+ml_features:
+  - avg_monthly_balance
+  - delinquency_count
+  - repayment_consistency
+  - cashflow_ratio
+
+thresholds:
+  credit_score_min: 650
+  delinq_max: 0              # 0 = zero tolerance
+  cashflow_min: 1.2          # credits / debits ratio
+
+ml_model:
+  default_relative_path: "artifacts/delinq_model.joblib"
+  path_env: DELINQ_MODEL_PATH
+  fallback_heuristic: true
+  # Heuristic weights for score when no model file exists
+  heuristic_weights:
+    avg_monthly_balance: -0.0001
+    delinquency_count: 2.5
+    cashflow_ratio: -0.8
+    repayment_consistency: -1.5

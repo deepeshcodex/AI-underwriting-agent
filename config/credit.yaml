@@ -1,0 +1,32 @@
+# TransUnion / Experian — endpoints and behavior (mock in dev via CREDIT_USE_MOCK=true).
+
+version: "1.0"
+
+providers:
+  transunion:
+    # Placeholders; resolved via envsubst-style env vars in code
+    base_url_env: TRANSUNION_BASE_URL
+    score_path: "/v1/credit/score"
+    report_path: "/v1/credit/report"
+    api_key_env: TRANSUNION_API_KEY
+    timeout_seconds: 30
+    max_retries: 3
+    backoff_seconds: 1.5
+  experian:
+    base_url_env: EXPERIAN_BASE_URL
+    score_path: "/api/credit-score"
+    report_path: "/api/credit-report"
+    api_key_env: EXPERIAN_API_KEY
+    timeout_seconds: 30
+    max_retries: 3
+    backoff_seconds: 1.5
+
+# Pull order: first successful response wins for primary score (configurable).
+pull_order:
+  - transunion
+  - experian
+
+mock:
+  enabled_env: CREDIT_USE_MOCK
+  default_score: 720
+  default_adverse_flags: []

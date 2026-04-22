@@ -1,0 +1,54 @@
+# Underwriting rules — all thresholds and formulas are data-driven (no literals in code).
+
+version: "1.0"
+
+pre_screen:
+  # If false, premium/age may be validated only after extraction.
+  require_premium_before_docs: false
+  require_dob_before_docs: false
+
+currency: ZAR
+
+age:
+  min: 40
+  max: 85
+
+premium:
+  min_zar: 50000
+
+# Debt Service Coverage Ratio: numerator / denominator using extracted field names.
+dscr:
+  numerator_field: noi
+  denominator_field: debt_service
+  minimum: 1.25
+  treat_missing_denominator_as: reject  # reject | use_one
+
+# Debt-to-income (percent).
+dti:
+  maximum_percent: 40
+  income_field: gross_monthly_income
+  debt_field: monthly_debt_payments
+
+# Life expectancy-style checks (Structured Annuity / Just SA–style flags — configurable).
+life_expectancy:
+  enabled: true
+  min_years_remaining: 5
+  field_name: life_expectancy_years
+
+# Spouse benefit on contract (0–100%).
+spouse_benefit:
+  min_percent: 0
+  max_percent: 100
+  field_name: spouse_benefit_percent
+
+# Routing: when all metrics present and within bounds, candidate for STP.
+stp_risk_band: low
+
+risk_bands:
+  low:
+    max_ml_score: 0.35
+    require_credit_clear: true
+  medium:
+    max_ml_score: 0.65
+  high:
+    max_ml_score: 1.0

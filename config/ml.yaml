@@ -1,0 +1,22 @@
+# Risk ML artifact — path and feature order defined in config.
+
+version: "1.0"
+
+model:
+  path_env: ML_MODEL_PATH
+  default_relative_path: "artifacts/risk_model.joblib"
+
+features:
+  - dscr
+  - dti_percent
+  - credit_score_normalized
+  - spouse_benefit_percent
+  - life_expectancy_years
+
+fallback:
+  # If file missing: logistic-style heuristic weights (still driven by config)
+  use_heuristic: true
+  heuristic_weights:
+    dscr: -0.9
+    dti_percent: 0.02
+    credit_score_normalized: -0.65

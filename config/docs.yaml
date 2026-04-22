@@ -1,0 +1,43 @@
+# Mandatory document types for Structured Annuity underwriting (loaded at runtime).
+# Keys/labels are used by doc_ingest and extract_data; change without code changes.
+
+version: "1.0"
+
+mandatory_categories:
+  - id: identity
+    label: "Government-issued ID"
+    accepted_mime:
+      - application/pdf
+      - image/jpeg
+      - image/png
+    ocr_required: true
+  - id: income_proof
+    label: "Income verification (payslip or employer letter)"
+    accepted_mime:
+      - application/pdf
+      - image/jpeg
+      - image/png
+    ocr_required: true
+  - id: bank_statement
+    label: "Recent bank statement (3 months)"
+    accepted_mime:
+      - application/pdf
+      - image/jpeg
+      - image/png
+    ocr_required: true
+  - id: application_form
+    label: "Signed SA application / illustration"
+    accepted_mime:
+      - application/pdf
+    ocr_required: true
+
+optional_categories:
+  - id: medical_underwriting
+    label: "Medical / life expectancy (when applicable)"
+    accepted_mime:
+      - application/pdf
+    ocr_required: true
+
+validation:
+  min_files_per_mandatory_category: 1
+  max_file_size_mb: 25

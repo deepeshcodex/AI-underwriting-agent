@@ -1,0 +1,40 @@
+version: '1.0'
+rules:
+  age_min: 40
+  age_max: 85
+  min_premium: 50000
+ratios:
+  dscr_min: 1.25
+  dti_max: 0.4
+  ebitda_margin_min: 0.1
+  current_ratio_min: 1.2
+credit:
+  score_min: 650.0
+  bureau_score_min: 600
+business:
+  years_in_business_min: 2
+delinquency_keywords:
+- overdue
+- late
+- failed
+- nsf
+- dishonored
+- late fee
+- unpaid
+- returned
+stp_risk_band: low
+risk_bands:
+  low:
+    max_ml_score: 0.35
+    require_credit_clear: true
+  medium:
+    max_ml_score: 0.65
+  high:
+    max_ml_score: 1.0
+life_expectancy:
+  enabled: true
+  min_years_remaining: 5
+spouse_benefit:
+  min_percent: 0
+  max_percent: 100
+currency: ZAR
